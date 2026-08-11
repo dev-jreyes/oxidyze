@@ -1,0 +1,14 @@
+[package]
+name = "oxidyze"
+version = "0.2.0"
+edition = "2021"
+description = "Multi-threaded TCP network scanner (std-only, no dependencies)"
+
+[[bin]]
+name = "oxidyze"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
