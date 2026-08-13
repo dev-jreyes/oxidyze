@@ -2,9 +2,6 @@
 
 A multi-threaded TCP connect scanner in Rust, with no external dependencies.
 
-This is a rework of `first.rs` into a proper Cargo project. The original is
-left untouched at `../first.rs` so you can diff the two.
-
 ## Build
 
 ```sh
