@@ -194,6 +194,16 @@ where
         None::<()>
     });
 
+    answered_hosts(&candidates, &answered)
+}
+
+/// Collects the candidates whose flag is set, in ascending address order.
+///
+/// Split out of `discover_hosts` so the ordering guarantee is testable
+/// without sockets: only 127.0.0.1 answers reliably on both Linux and macOS
+/// (macOS binds just that one address on lo0, so 127.0.0.2 times out), and a
+/// single live host can never demonstrate a sort.
+fn answered_hosts(candidates: &[Ipv4Addr], answered: &[AtomicBool]) -> Vec<Ipv4Addr> {
     // Callers pass ascending CIDR iterators, but the signature accepts any
     // order, so sort rather than inherit whatever came in.
     let mut hosts: Vec<Ipv4Addr> = candidates
@@ -298,9 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn discovery_returns_hosts_sorted() {
-        // The result is built by filtering the candidate list, so an unsorted
-        // caller must not leak its ordering into the output.
+    fn discovery_excludes_hosts_that_never_answer() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let localhost: Ipv4Addr = "127.0.0.1".parse().unwrap();
@@ -312,6 +320,39 @@ mod tests {
             4,
             Duration::from_millis(50),
         );
-        assert!(alive.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(alive, vec![localhost]);
+    }
+
+    fn flags(bits: &[bool]) -> Vec<AtomicBool> {
+        bits.iter().map(|b| AtomicBool::new(*b)).collect()
+    }
+
+    #[test]
+    fn answered_hosts_sorts_regardless_of_candidate_order() {
+        let candidates: Vec<Ipv4Addr> = ["10.0.0.5", "10.0.0.1", "10.0.0.9", "10.0.0.3"]
+            .iter()
+            .map(|s| s.parse().unwrap())
+            .collect();
+
+        // .5 and .3 answered. The candidate order is deliberately unsorted, so
+        // an implementation that merely filtered would return [.5, .3].
+        let alive = answered_hosts(&candidates, &flags(&[true, false, false, true]));
+
+        assert_eq!(
+            alive,
+            vec![
+                "10.0.0.3".parse::<Ipv4Addr>().unwrap(),
+                "10.0.0.5".parse::<Ipv4Addr>().unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn answered_hosts_is_empty_when_nothing_answered() {
+        let candidates: Vec<Ipv4Addr> = ["10.0.0.2", "10.0.0.1"]
+            .iter()
+            .map(|s| s.parse().unwrap())
+            .collect();
+        assert!(answered_hosts(&candidates, &flags(&[false, false])).is_empty());
     }
 }

@@ -101,7 +101,7 @@ cargo clippy --all-targets
 cargo fmt --check
 ```
 
-71 tests, no network access required beyond loopback. The socket-touching
+75 tests, no network access required beyond loopback. The socket-touching
 tests bind an ephemeral port on `127.0.0.1` and scan for it.
 
 ## Notable fixes and hardening
