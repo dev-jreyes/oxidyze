@@ -1,9 +1,9 @@
 //! TCP connect scanning and host discovery.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -160,28 +160,48 @@ where
     I: IntoIterator<Item = Ipv4Addr>,
 {
     let candidates: Vec<Ipv4Addr> = candidates.into_iter().collect();
-    let work: Vec<(Ipv4Addr, u16)> = probe_ports
+
+    // Each work item carries its candidate's index so a worker can flag the
+    // host directly, without hashing the address or consulting a shared map.
+    let work: Vec<(usize, Ipv4Addr, u16)> = probe_ports
         .iter()
-        .flat_map(|port| candidates.iter().map(move |ip| (*ip, *port)))
+        .flat_map(|port| {
+            candidates
+                .iter()
+                .enumerate()
+                .map(move |(idx, ip)| (idx, *ip, *port))
+        })
         .collect();
 
-    let alive: Arc<Mutex<HashSet<Ipv4Addr>>> = Arc::new(Mutex::new(HashSet::new()));
-    let alive_worker = Arc::clone(&alive);
+    // One flag per candidate rather than a shared set behind a mutex. The
+    // membership check runs on every (host, probe port) pair, so a lock there
+    // put the whole pool in contention on the hot path -- for a check far
+    // cheaper than the syscall needed to acquire it.
+    let answered: Arc<Vec<AtomicBool>> =
+        Arc::new(candidates.iter().map(|_| AtomicBool::new(false)).collect());
+    let answered_worker = Arc::clone(&answered);
 
-    parallel_filter_map(work, threads, move |(ip, port)| {
-        if alive_worker.lock().unwrap().contains(&ip) {
+    parallel_filter_map(work, threads, move |(idx, ip, port)| {
+        // Relaxed is sufficient: the flag synchronizes no other memory, and a
+        // stale read costs at most one redundant probe -- which the mutex
+        // version could also produce by racing between its check and insert.
+        if answered_worker[idx].load(Ordering::Relaxed) {
             return None; // already proven up by an earlier probe
         }
         if tcp_probe_answers(SocketAddr::new(IpAddr::V4(ip), port), timeout) {
-            alive_worker.lock().unwrap().insert(ip);
+            answered_worker[idx].store(true, Ordering::Relaxed);
         }
         None::<()>
     });
 
-    let mut hosts: Vec<Ipv4Addr> = {
-        let mut guard = alive.lock().unwrap();
-        std::mem::take(&mut *guard).into_iter().collect()
-    };
+    // Callers pass ascending CIDR iterators, but the signature accepts any
+    // order, so sort rather than inherit whatever came in.
+    let mut hosts: Vec<Ipv4Addr> = candidates
+        .iter()
+        .zip(answered.iter())
+        .filter(|(_, flag)| flag.load(Ordering::Relaxed))
+        .map(|(ip, _)| *ip)
+        .collect();
     hosts.sort_unstable();
     hosts
 }
@@ -257,5 +277,41 @@ mod tests {
 
         let alive = discover_hosts(vec![localhost], &[port], 4, Duration::from_millis(300));
         assert_eq!(alive, vec![localhost]);
+    }
+
+    #[test]
+    fn discovery_reports_each_host_once_across_probe_ports() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let localhost: Ipv4Addr = "127.0.0.1".parse().unwrap();
+
+        // Loopback answers on every port -- open on the listener, refused on
+        // the rest -- so all three probes prove the host up. It must still be
+        // reported exactly once.
+        let alive = discover_hosts(
+            vec![localhost],
+            &[port, port.wrapping_add(1), port.wrapping_add(2)],
+            4,
+            Duration::from_millis(300),
+        );
+        assert_eq!(alive, vec![localhost]);
+    }
+
+    #[test]
+    fn discovery_returns_hosts_sorted() {
+        // The result is built by filtering the candidate list, so an unsorted
+        // caller must not leak its ordering into the output.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let localhost: Ipv4Addr = "127.0.0.1".parse().unwrap();
+        let unroutable: Ipv4Addr = "192.0.2.1".parse().unwrap(); // TEST-NET-1
+
+        let alive = discover_hosts(
+            vec![unroutable, localhost],
+            &[port],
+            4,
+            Duration::from_millis(50),
+        );
+        assert!(alive.windows(2).all(|w| w[0] < w[1]));
     }
 }
