@@ -1,6 +1,16 @@
 # oxidyze
 
-A multi-threaded TCP connect scanner in Rust, with no external dependencies.
+[![CI](https://github.com/dev-jreyes/oxidyze/actions/workflows/ci.yml/badge.svg)](https://github.com/dev-jreyes/oxidyze/actions/workflows/ci.yml)
+
+A multi-threaded TCP connect scanner and LAN recon tool, written in Rust with
+zero external dependencies — no async runtime, no crates, just `std`.
+
+Point it at a host and it scans ports. Point it at a CIDR block and it finds
+the live hosts, resolves their names over PTR and mDNS, pulls their MAC
+addresses from the ARP cache, and optionally grabs service banners.
+
+> **Scope:** only scan hosts and networks you own or have written
+> authorization to test.
 
 ## Build
 
@@ -94,7 +104,11 @@ cargo fmt --check
 71 tests, no network access required beyond loopback. The socket-touching
 tests bind an ephemeral port on `127.0.0.1` and scan for it.
 
-## Changes from `first.rs`
+## Notable fixes and hardening
+
+oxidyze began as a single-file prototype. Rewriting it as a proper Cargo
+project surfaced a number of real bugs — worth listing because most of them
+are easy to reproduce in any scanner written the obvious way.
 
 Bugs fixed:
 
@@ -130,8 +144,16 @@ Performance:
   remaining probes are skipped once it has answered.
 - `--lan` scans every (host, port) pair on one pool rather than spawning a
   fresh pool per host.
-- The work queue is an atomic index instead of a mutex-guarded iterator.
+- The work queue is an atomic index instead of a mutex-guarded iterator, and
+  discovery tracks which hosts have answered with one atomic flag per
+  candidate — nothing on the hot path takes a lock.
 
-## Scope
+## Ideas for later
 
-Only scan hosts and networks you own or have written authorization to test.
+- JSON output mode, for piping into other tools.
+- Basic OS fingerprinting from TTL / TCP window size.
+- UDP port scanning (currently TCP-only).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

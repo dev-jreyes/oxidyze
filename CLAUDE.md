@@ -92,6 +92,6 @@ These are load-bearing. Changing them silently breaks correctness.
 
 ## History
 
-Reworked from a single 700-line `../first.rs` (still on disk for diffing).
-The README's "Changes from first.rs" section lists the five bugs that were
-fixed and why each one mattered.
+Reworked from a single 700-line prototype (`first.rs`), which is no longer in
+the tree. The README's "Notable fixes and hardening" section lists the five
+bugs that were fixed and why each one mattered.

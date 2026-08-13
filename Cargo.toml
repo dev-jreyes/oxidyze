@@ -3,6 +3,11 @@ name = "oxidyze"
 version = "0.2.0"
 edition = "2021"
 description = "Multi-threaded TCP network scanner (std-only, no dependencies)"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/dev-jreyes/oxidyze"
+keywords = ["network", "scanner", "port-scanner", "security", "cli"]
+categories = ["command-line-utilities", "network-programming"]
 
 [[bin]]
 name = "oxidyze"
